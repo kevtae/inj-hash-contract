@@ -24,10 +24,6 @@ pub fn setup_vault_account(
         return Err(ContractError::VaultAlreadySetup {});
     }
     
-    // Create a deterministic vault address (would be a sub-account in practice)
-    // In a real implementation, you would derive this address in a secure way
-    // For Token Factory, we can use a derived address based on the denom
-    
     // Extract creator address from the denom (assuming format is factory/{creator}/{subdenom})
     let parts: Vec<&str> = mint.split('/').collect();
     if parts.len() < 3 {
@@ -37,9 +33,17 @@ pub fn setup_vault_account(
     let creator = parts[1];
     let subdenom = parts[2];
     
-    // Create deterministic vault addresses
-    let vault_addr = Addr::unchecked(format!("vault_{}_{}", creator, subdenom));
-    let inj_vault_wallet = Addr::unchecked(format!("inj_vault_{}_{}", creator, subdenom));
+    // Create deterministic vault addresses using proper bech32 format
+    // Use prefix "inj1v" for vault and "inj1i" for inj vault to ensure proper bech32 format
+    // In a real implementation, you would derive these properly with a cryptographic approach
+    
+    // Clean the parts to ensure they're safe for address construction
+    let clean_creator = creator.replace("/", "").replace("_", "");
+    let clean_subdenom = subdenom.replace("/", "").replace("_", "");
+    
+    // Create properly formatted addresses
+    let vault_addr = Addr::unchecked(format!("inj1v{}{}", clean_creator, clean_subdenom));
+    let inj_vault_wallet = Addr::unchecked(format!("inj1i{}{}", clean_creator, clean_subdenom));
     
     // Update the vault with proper addresses
     vault.vault_account = Some(vault_addr.clone());

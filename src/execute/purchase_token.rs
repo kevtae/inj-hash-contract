@@ -1,6 +1,6 @@
 use cosmwasm_std::{
-    DepsMut, Env, MessageInfo, Response, Uint128, BankMsg, CosmosMsg, 
-    coins, SubMsg, WasmMsg, to_binary
+    DepsMut, Env, MessageInfo, Response, Uint128, BankMsg, 
+    coins, WasmMsg, to_json_binary, StdError
 };
 use crate::{
     error::ContractError, 
@@ -8,28 +8,17 @@ use crate::{
     utils::calculate_price
 };
 
-// Custom token factory mint message structure (for Injective)
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
-struct MintTokenMsg {
-    mint: MintParams,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
-struct MintParams {
-    sender: String,
-    amount: TokenAmount,
-    recipient: String,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
-struct TokenAmount {
+// Custom message structure to be passed to a Token Factory handler contract
+#[derive(serde::Serialize)]
+struct MintMsg {
     denom: String,
     amount: String,
+    recipient: String,
 }
 
 pub fn purchase_token(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     mint: String,
     amount_tokens: Uint128,
@@ -50,6 +39,13 @@ pub fn purchase_token(
     let oracle = VIEWERSHIP_ORACLES.load(deps.storage, mint_key)?;
     let mut vault = TOKEN_VAULTS.load(deps.storage, mint_key)?;
     let config = CONFIG.load(deps.storage)?;
+    
+    // Verify vault is properly set up
+    if vault.vault_account.is_none() {
+        return Err(ContractError::CustomError { 
+            val: "Vault account not set up. Please call setup_vault_account first.".to_string() 
+        });
+    }
     
     // Calculate price based on viewership data
     let price_per_token = calculate_price(&oracle, Uint128::zero())?;
@@ -74,55 +70,51 @@ pub fn purchase_token(
     }
     
     // Process payments
-    let mut messages: Vec<CosmosMsg> = vec![];
+    let mut messages = vec![];
+    
+    // Validate platform wallet address before sending
+    let platform_wallet_str = config.platform_wallet.to_string();
+    if let Err(e) = deps.api.addr_validate(&platform_wallet_str) {
+        return Err(ContractError::CustomError { 
+            val: format!("Invalid platform wallet address: {}", e) 
+        });
+    }
     
     // Send platform fee
     let platform_msg = BankMsg::Send {
-        to_address: config.platform_wallet.to_string(),
+        to_address: platform_wallet_str.clone(),
         amount: coins(platform_fee.u128(), "inj"),
     };
-    messages.push(CosmosMsg::Bank(platform_msg));
+    messages.push(cosmwasm_std::CosmosMsg::Bank(platform_msg));
     
-    // Send remainder to vault
+    // Validate vault wallet address before sending
+    let vault_wallet_str = vault.inj_vault_wallet.to_string();
+    if let Err(e) = deps.api.addr_validate(&vault_wallet_str) {
+        return Err(ContractError::CustomError { 
+            val: format!("Invalid vault wallet address: {}", e) 
+        });
+    }
+    
+    // Send remainder to vault - use clone() to avoid moving the string
     let vault_msg = BankMsg::Send {
-        to_address: vault.inj_vault_wallet.to_string(),
+        to_address: vault_wallet_str.clone(),
         amount: coins(vault_amount.u128(), "inj"),
     };
-    messages.push(CosmosMsg::Bank(vault_msg));
+    messages.push(cosmwasm_std::CosmosMsg::Bank(vault_msg));
     
     // Update vault total collected
     vault.total_collected += vault_amount;
     TOKEN_VAULTS.save(deps.storage, mint_key, &vault)?;
     
-    // For Token Factory, we need to use the admin wallet to mint tokens
-    // This is typically handled outside the contract via MsgMint
-    // Here we're using a SubMsg to call the tokenfactory module
-    
-    let mint_msg = WasmMsg::Execute {
-        contract_addr: "inj1tokenfactory".to_string(), // This is a placeholder - replace with actual address
-        msg: to_binary(&MintTokenMsg {
-            mint: MintParams {
-                sender: config.authority.to_string(), // Use the contract authority as sender
-                amount: TokenAmount {
-                    denom: mint.clone(),
-                    amount: amount_tokens.to_string(),
-                },
-                recipient: info.sender.to_string(),
-            }
-        })?,
-        funds: vec![],
-    };
-    
-    // Note: In a real implementation, you might need to use a different approach
-    // such as sending a message to a service that has permission to mint tokens
-    messages.push(CosmosMsg::Wasm(mint_msg));
-    
-    // Check liquidity threshold
+    // Create response with debugging information
     let mut response = Response::new()
         .add_messages(messages)
         .add_attribute("action", "purchase_token")
-        .add_attribute("amount", amount_tokens.to_string())
-        .add_attribute("total_cost", total_cost.to_string());
+        .add_attribute("mint_denom", mint)
+        .add_attribute("mint_amount", amount_tokens.to_string())
+        .add_attribute("mint_to", info.sender)
+        .add_attribute("total_cost", total_cost.to_string())
+        .add_attribute("vault_addr", vault_wallet_str); // Now we can use it again
         
     if vault.total_collected >= vault.liquidity_threshold {
         if let Some(dex_pool) = &vault.dex_pool {

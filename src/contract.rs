@@ -1,17 +1,13 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
-use cw2::set_contract_version;
+use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use cw20::Cw20ReceiveMsg;
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 use crate::state::{Config, CONFIG};
 use crate::execute;
 use crate::query;
-
-// Contract name and version used for migration info
-const CONTRACT_NAME: &str = "crates.io:hashmelody";
-const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -20,8 +16,6 @@ pub fn instantiate(
     info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-
     let platform_wallet = deps.api.addr_validate(&msg.platform_wallet)?;
     let oracle_authority = deps.api.addr_validate(&msg.oracle_authority)?;
     
@@ -35,7 +29,9 @@ pub fn instantiate(
     
     Ok(Response::new()
         .add_attribute("method", "instantiate")
-        .add_attribute("owner", info.sender))
+        .add_attribute("authority", info.sender)
+        .add_attribute("platform_wallet", msg.platform_wallet)
+        .add_attribute("oracle_authority", msg.oracle_authority))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -67,8 +63,8 @@ pub fn execute(
         ExecuteMsg::MintToken { mint, recipient, amount } => {
             execute::mint_token(deps, env, info, mint, recipient, amount)
         },
-        ExecuteMsg::Receive(msg) => {
-            execute::receive_cw20(deps, env, info, msg)
+        ExecuteMsg::Receive(cw20_msg) => {
+            execute::receive_cw20(deps, env, info, cw20_msg)
         },
     }
 }
@@ -76,9 +72,9 @@ pub fn execute(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::GetPlatformConfig {} => to_binary(&query::get_platform_config(deps)?),
-        QueryMsg::GetTokenMetadata { mint } => to_binary(&query::get_token_metadata(deps, mint)?),
-        QueryMsg::GetTokenPrice { mint } => to_binary(&query::get_token_price(deps, mint)?),
-        QueryMsg::GetVaultBalance { mint } => to_binary(&query::get_vault_balance(deps, mint)?),
+        QueryMsg::GetPlatformConfig {} => to_json_binary(&query::get_platform_config(deps)?),
+        QueryMsg::GetTokenMetadata { mint } => to_json_binary(&query::get_token_metadata(deps, mint)?),
+        QueryMsg::GetTokenPrice { mint } => to_json_binary(&query::get_token_price(deps, mint)?),
+        QueryMsg::GetVaultBalance { mint } => to_json_binary(&query::get_vault_balance(deps, mint)?),
     }
 }

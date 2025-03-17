@@ -1,1 +1,0 @@
-9b3c21b9debd802e347b01b075733b7a1bcfb47dde5b36603113968ea46245e3  ./target/wasm32-unknown-unknown/release/hashmelody.wasm
